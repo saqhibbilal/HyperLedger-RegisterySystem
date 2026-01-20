@@ -173,15 +173,54 @@ The setup script (`scripts/setup-env.ps1`) will handle this automatically. It wi
 - **Slow downloads**: Fabric images are large (~2GB), ensure stable connection
 - **Firewall blocking**: Allow Docker through Windows Firewall
 
-## Next Steps
+## Project Phases
 
-After completing Phase 1 (Environment Setup), proceed to:
-- **Phase 2**: Fabric Network Configuration
-- **Phase 3**: Chaincode Development
-- **Phase 4**: Network Deployment
-- **Phase 5**: Backend API Development
-- **Phase 6**: Frontend Development
-- **Phase 7**: Testing & Documentation
+1. ✅ **Phase 1**: Environment Setup & Prerequisites - COMPLETE
+2. ✅ **Phase 2**: Fabric Network Configuration - COMPLETE
+3. ✅ **Phase 3**: Chaincode Development - COMPLETE
+4. ✅ **Phase 4**: Network Deployment - COMPLETE
+5. **Phase 5**: Backend API Development
+6. **Phase 6**: Frontend Development
+7. **Phase 7**: Testing & Documentation
+
+## Quick Start
+
+### Complete Deployment
+
+Deploy the entire network in one command:
+
+```powershell
+.\scripts\deploy-network.ps1
+```
+
+### Step-by-Step Deployment
+
+1. **Start Network:**
+   ```powershell
+   .\scripts\network-start.ps1
+   ```
+
+2. **Generate Crypto Materials:**
+   ```powershell
+   .\scripts\generate-crypto-materials.ps1
+   ```
+
+3. **Generate Genesis Block:**
+   ```powershell
+   .\scripts\generate-genesis-block.ps1
+   ```
+
+4. **Create Channel:**
+   ```powershell
+   .\scripts\create-channel-full.ps1
+   ```
+
+5. **Deploy Chaincode:**
+   ```powershell
+   .\scripts\deploy-chaincode.ps1
+   ```
+
+For detailed deployment instructions, see `docs/DEPLOYMENT.md`.
 
 ## Resources
 
