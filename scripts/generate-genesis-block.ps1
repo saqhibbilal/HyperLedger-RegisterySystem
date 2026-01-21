@@ -40,22 +40,23 @@ try {
     # Set environment variables for configtxgen
     $env:FABRIC_CFG_PATH = "/etc/hyperledger/configtx"
     
-    # Generate genesis block
-    $dockerCommand = @(
-        "run --rm",
-        "-v ${networkPath}:/etc/hyperledger/configtx",
-        "-v ${channelArtifactsPath}:/etc/hyperledger/channel-artifacts",
-        "-v ${genesisBlockPath}:/etc/hyperledger/system-genesis-block",
-        "hyperledger/fabric-tools:2.5.3",
-        "configtxgen",
-        "-profile LandRegistryGenesis",
-        "-channelID system-channel",
-        "-outputBlock /etc/hyperledger/system-genesis-block/genesis.block",
-        "-configPath /etc/hyperledger/configtx"
-    )
+    # Generate genesis block using proper PowerShell syntax
+    Write-Host "  Running configtxgen..." -ForegroundColor Gray
     
-    Write-Host "  Running: docker $dockerCommand" -ForegroundColor Gray
-    $result = docker $dockerCommand 2>&1
+    $organizationsPath = "$networkPath/organizations"
+    
+    $result = docker run --rm `
+        -v "${configtxPath}:/etc/hyperledger/configtx" `
+        -v "${organizationsPath}:/etc/hyperledger/organizations" `
+        -v "${channelArtifactsPath}:/etc/hyperledger/channel-artifacts" `
+        -v "${genesisBlockPath}:/etc/hyperledger/system-genesis-block" `
+        -e FABRIC_CFG_PATH=/etc/hyperledger/configtx `
+        hyperledger/fabric-tools:2.5.3 `
+        configtxgen `
+        -profile LandRegistryGenesis `
+        -channelID system-channel `
+        -outputBlock /etc/hyperledger/system-genesis-block/genesis.block `
+        -configPath /etc/hyperledger/configtx 2>&1
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
