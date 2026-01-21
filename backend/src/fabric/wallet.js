@@ -49,10 +49,16 @@ class WalletService {
             const caAdminPassword = process.env.CA_ADMIN_PASSWORD || 'adminpw';
 
             // Create CA client
-            const caURL = `http://${caEndpoint}`;
-            const ca = new FabricCAServices(caURL);
+            // CA has TLS_ENABLED=true, so we need to use HTTPS
+            // For local development with self-signed certs, disable TLS verification
+            const caURL = `https://${caEndpoint}`;
+            const tlsOptions = {
+                trustedRoots: [],
+                verify: false // Disable TLS verification for local development
+            };
+            const ca = new FabricCAServices(caURL, tlsOptions, caName);
 
-            // Enroll admin
+            // Enroll admin (if not already done in try-catch above)
             const enrollment = await ca.enroll({
                 enrollmentID: caAdminUsername,
                 enrollmentSecret: caAdminPassword

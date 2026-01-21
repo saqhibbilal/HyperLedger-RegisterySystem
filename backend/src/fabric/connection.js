@@ -47,12 +47,13 @@ class FabricConnection {
 
             // Load connection profile
             const connectionProfilePath = process.env.CONNECTION_PROFILE_PATH ||
-                path.join(__dirname, '../../../network/organizations/peerOrganizations/landreg.example.com/connection-landreg.yaml');
+                path.join(__dirname, '../../../network/organizations/peerOrganizations/landreg.example.com/connection-landreg.json');
 
             if (!fs.existsSync(connectionProfilePath)) {
                 throw new Error(`Connection profile not found at ${connectionProfilePath}`);
             }
 
+            // Read JSON connection profile
             const connectionProfile = JSON.parse(fs.readFileSync(connectionProfilePath, 'utf8'));
 
             // Connection options
