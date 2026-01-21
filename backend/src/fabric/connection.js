@@ -60,7 +60,11 @@ class FabricConnection {
             const connectionOptions = {
                 wallet: this.wallet,
                 identity: userId,
-                discovery: { enabled: true, asLocalhost: true }
+                discovery: { enabled: false, asLocalhost: true }, // Disable discovery for now
+                eventHandlerOptions: {
+                    commitTimeout: 300,
+                    strategy: null
+                }
             };
 
             // Connect to gateway

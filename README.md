@@ -185,42 +185,37 @@ The setup script (`scripts/setup-env.ps1`) will handle this automatically. It wi
 
 ## Quick Start
 
-### Complete Deployment
+### Test Frontend & Backend (Without Full Network)
 
-Deploy the entire network in one command:
-
-```powershell
-.\scripts\deploy-network.ps1
-```
-
-### Step-by-Step Deployment
-
-1. **Start Network:**
+1. **Start Backend:**
    ```powershell
-   .\scripts\network-start.ps1
+   cd backend
+   npm install
+   npm run enroll-admin  # Enroll admin user
+   npm start
    ```
 
-2. **Generate Crypto Materials:**
+2. **Start Frontend:**
    ```powershell
-   .\scripts\generate-crypto-materials.ps1
+   cd frontend
+   npm install
+   npm run dev
    ```
 
-3. **Generate Genesis Block:**
-   ```powershell
-   .\scripts\generate-genesis-block.ps1
-   ```
+3. **Open Browser:**
+   - Frontend: `http://localhost:3001`
+   - Backend API: `http://localhost:3000`
 
-4. **Create Channel:**
-   ```powershell
-   .\scripts\create-channel-full.ps1
-   ```
+**Note:** API calls will fail until Fabric network is fully deployed (crypto materials, channel, chaincode).
 
-5. **Deploy Chaincode:**
-   ```powershell
-   .\scripts\deploy-chaincode.ps1
-   ```
+### Full Network Deployment
 
-For detailed deployment instructions, see `docs/DEPLOYMENT.md`.
+For complete deployment, see `docs/DEPLOYMENT.md` and `docs/QUICK_START.md`.
+
+**Current Status:**
+- ✅ Frontend & Backend ready
+- ✅ Chaincode ready
+- ⚠️ Network deployment requires crypto material generation (complex process)
 
 ## Resources
 
