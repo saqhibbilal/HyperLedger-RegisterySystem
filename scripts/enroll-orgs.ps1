@@ -9,6 +9,28 @@ $orgsDir = Join-Path $networkDir "organizations"
 $fabricCaDir = Join-Path $orgsDir "fabric-ca"
 $peerOrgsDir = Join-Path $orgsDir "peerOrganizations"
 $ordererOrgsDir = Join-Path $orgsDir "ordererOrganizations"
+$networkName = "landregistry_landregistry"
+
+# Helper function to run fabric-ca-client via Docker
+function Invoke-FabricCAClient {
+    param(
+        [string]$Command,
+        [string]$ClientHome,
+        [string]$AdditionalArgs = ""
+    )
+    
+    $networkPath = (Resolve-Path $projectRoot).Path
+    $volumeMount = "${networkPath}/network/organizations:/etc/hyperledger/organizations"
+    $dockerClientHome = $ClientHome.Replace($networkPath + "\network\organizations", "/etc/hyperledger/organizations").Replace("\", "/")
+    
+    $dockerCmd = "docker run --rm --network $networkName -v ${volumeMount} -e FABRIC_CA_CLIENT_HOME=$dockerClientHome hyperledger/fabric-tools:2.5.3 fabric-ca-client $Command $AdditionalArgs"
+    
+    $result = Invoke-Expression $dockerCmd 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "fabric-ca-client command failed: $result"
+    }
+    return $result
+}
 
 # Colors for output
 function Write-Info {

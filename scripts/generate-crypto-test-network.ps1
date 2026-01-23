@@ -34,15 +34,46 @@ function Write-Warning {
     Write-Host "WARNING: $Message" -ForegroundColor Yellow
 }
 
-# Check if fabric-ca-client is available
+# Check if Docker is available and fabric-tools image exists
 function Test-FabricCAClient {
     try {
-        $null = fabric-ca-client version
-        return $true
+        docker ps | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Docker is not running. Please start Docker Desktop."
+            return $false
+        }
+        
+        # Check if fabric-tools image exists
+        $imageExists = docker images hyperledger/fabric-tools:2.5.3 --format "{{.Repository}}:{{.Tag}}" 2>&1
+        if ($imageExists -match "hyperledger/fabric-tools:2.5.3") {
+            return $true
+        } else {
+            Write-Info "Pulling fabric-tools image..."
+            docker pull hyperledger/fabric-tools:2.5.3
+            return $LASTEXITCODE -eq 0
+        }
     } catch {
-        Write-Error "fabric-ca-client not found. Please install Fabric binaries."
+        Write-Error "Docker is not available. Please install Docker Desktop."
         return $false
     }
+}
+
+# Run fabric-ca-client command using Docker
+function Invoke-FabricCAClient {
+    param(
+        [string]$Command,
+        [string]$WorkingDir,
+        [string]$NetworkName = "landregistry_landregistry"
+    )
+    
+    $networkPath = (Resolve-Path $projectRoot).Path
+    $volumeMount = "${networkPath}/network/organizations:/etc/hyperledger/organizations"
+    
+    $dockerCmd = "docker run --rm --network $NetworkName -v ${volumeMount} -w /etc/hyperledger/organizations hyperledger/fabric-tools:2.5.3 $Command"
+    
+    Write-Info "Running: fabric-ca-client $Command"
+    $result = Invoke-Expression $dockerCmd 2>&1
+    return $result
 }
 
 # Wait for CA to create tls-cert.pem
@@ -97,17 +128,31 @@ function Get-CACertificate {
     
     while ($retries -lt $MaxRetries -and -not $success) {
         try {
-            $env:FABRIC_CA_CLIENT_HOME = $fabricCaOrgDir
-            fabric-ca-client getcainfo `
-                -u "https://admin:adminpw@localhost:$CaPort" `
-                --caname $CaName `
-                --tls.certfiles $tlsCertPath
+            # Use Docker to run fabric-ca-client getcainfo
+            $networkPath = (Resolve-Path $projectRoot).Path
+            $volumeMount = "${networkPath}/network/organizations:/etc/hyperledger/organizations"
+            $fabricCaClientHome = "/etc/hyperledger/organizations/fabric-ca/$CaOrg"
+            $tlsCertPathDocker = "/etc/hyperledger/organizations/fabric-ca/$CaOrg/tls-cert.pem"
             
-            if (Test-Path $caCertPath) {
+            # Map CA org name to container name
+            $caContainerMap = @{
+                "ordererOrg" = "ca-orderer"
+                "landreg" = "ca-landreg"
+                "subregistrar" = "ca-subregistrar"
+                "court" = "ca-court"
+            }
+            $caContainer = $caContainerMap[$CaOrg]
+            
+            # Inside Docker network, all CAs listen on port 7054
+            $dockerCmd = "docker run --rm --network landregistry_landregistry -v ${volumeMount} -e FABRIC_CA_CLIENT_HOME=$fabricCaClientHome hyperledger/fabric-tools:2.5.3 fabric-ca-client getcainfo -u https://admin:adminpw@${caContainer}:7054 --caname $CaName --tls.certfiles $tlsCertPathDocker"
+            
+            $result = Invoke-Expression $dockerCmd 2>&1
+            
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $caCertPath)) {
                 Write-Success "Retrieved CA certificate for $CaOrg"
                 $success = $true
             } else {
-                throw "ca-cert.pem not created"
+                throw "ca-cert.pem not created or command failed"
             }
         } catch {
             $retries++
