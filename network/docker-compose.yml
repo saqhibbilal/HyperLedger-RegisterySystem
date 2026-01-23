@@ -24,7 +24,7 @@ services:
       - "17054:17054"
     command: sh -c 'fabric-ca-server start -b admin:adminpw -d'
     volumes:
-      - ./organizations/ordererOrganizations/example.com/ca/:/etc/hyperledger/fabric-ca-server-config
+      - ./organizations/fabric-ca/ordererOrg/:/etc/hyperledger/fabric-ca-server-config
     networks:
       - landregistry
     healthcheck:
@@ -48,7 +48,7 @@ services:
       - "18054:17054"
     command: sh -c 'fabric-ca-server start -b admin:adminpw -d'
     volumes:
-      - ./organizations/peerOrganizations/landreg.example.com/ca/:/etc/hyperledger/fabric-ca-server-config
+      - ./organizations/fabric-ca/landreg/:/etc/hyperledger/fabric-ca-server-config
     networks:
       - landregistry
     healthcheck:
@@ -72,7 +72,7 @@ services:
       - "19054:17054"
     command: sh -c 'fabric-ca-server start -b admin:adminpw -d'
     volumes:
-      - ./organizations/peerOrganizations/subregistrar.example.com/ca/:/etc/hyperledger/fabric-ca-server-config
+      - ./organizations/fabric-ca/subregistrar/:/etc/hyperledger/fabric-ca-server-config
     networks:
       - landregistry
     healthcheck:
@@ -96,7 +96,7 @@ services:
       - "20054:17054"
     command: sh -c 'fabric-ca-server start -b admin:adminpw -d'
     volumes:
-      - ./organizations/peerOrganizations/court.example.com/ca/:/etc/hyperledger/fabric-ca-server-config
+      - ./organizations/fabric-ca/court/:/etc/hyperledger/fabric-ca-server-config
     networks:
       - landregistry
     healthcheck:

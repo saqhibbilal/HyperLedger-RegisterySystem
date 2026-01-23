@@ -34,13 +34,38 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Start-Sleep -Seconds 5
 
-# Step 2: Generate crypto materials
+# Step 2: Generate crypto materials (using test-network approach)
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Step 2: Generating Crypto Materials" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
-& .\scripts\generate-crypto-materials.ps1
+Write-Host "Using test-network proven approach..." -ForegroundColor Yellow
+
+# 2a: Start CAs and get CA certificates
+& .\scripts\generate-crypto-test-network.ps1
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[FAIL] Crypto generation failed" -ForegroundColor Red
+    Write-Host "[FAIL] CA setup failed" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ""
+Start-Sleep -Seconds 3
+
+# 2b: Enroll all organizations
+Write-Host "Enrolling organizations..." -ForegroundColor Yellow
+& .\scripts\enroll-orgs.ps1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[FAIL] Organization enrollment failed" -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ""
+Start-Sleep -Seconds 2
+
+# 2c: Generate connection profiles
+Write-Host "Generating connection profiles..." -ForegroundColor Yellow
+& .\scripts\create-connection-profiles.ps1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[FAIL] Connection profile generation failed" -ForegroundColor Red
     exit 1
 }
 

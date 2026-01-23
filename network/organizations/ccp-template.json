@@ -1,0 +1,61 @@
+{
+    "name": "landregistry-${ORG}",
+    "version": "1.0.0",
+    "client": {
+        "organization": "${ORG}",
+        "connection": {
+            "timeout": {
+                "peer": {
+                    "endorser": "300"
+                }
+            }
+        }
+    },
+    "organizations": {
+        "${ORG}": {
+            "mspid": "${ORG}MSP",
+            "peers": [
+                "peer0.${ORG_DOMAIN}"
+            ],
+            "certificateAuthorities": [
+                "ca.${ORG_DOMAIN}"
+            ]
+        }
+    },
+    "orderers": {
+        "orderer.example.com": {
+            "url": "grpcs://localhost:7050",
+            "tlsCACerts": {
+                "pem": "${ORDERERPEM}"
+            },
+            "grpcOptions": {
+                "ssl-target-name-override": "orderer.example.com",
+                "hostnameOverride": "orderer.example.com"
+            }
+        }
+    },
+    "peers": {
+        "peer0.${ORG_DOMAIN}": {
+            "url": "grpcs://localhost:${P0PORT}",
+            "tlsCACerts": {
+                "pem": "${PEERPEM}"
+            },
+            "grpcOptions": {
+                "ssl-target-name-override": "peer0.${ORG_DOMAIN}",
+                "hostnameOverride": "peer0.${ORG_DOMAIN}"
+            }
+        }
+    },
+    "certificateAuthorities": {
+        "ca.${ORG_DOMAIN}": {
+            "url": "https://localhost:${CAPORT}",
+            "caName": "${CA_NAME}",
+            "tlsCACerts": {
+                "pem": ["${CAPEM}"]
+            },
+            "httpOptions": {
+                "verify": false
+            }
+        }
+    }
+}
