@@ -9,27 +9,22 @@ $orgsDir = Join-Path $networkDir "organizations"
 $fabricCaDir = Join-Path $orgsDir "fabric-ca"
 $peerOrgsDir = Join-Path $orgsDir "peerOrganizations"
 $ordererOrgsDir = Join-Path $orgsDir "ordererOrganizations"
-$networkName = "landregistry_landregistry"
+$networkName = "network_landregistry"
 
-# Helper function to run fabric-ca-client via Docker
-function Invoke-FabricCAClient {
-    param(
-        [string]$Command,
-        [string]$ClientHome,
-        [string]$AdditionalArgs = ""
-    )
-    
-    $networkPath = (Resolve-Path $projectRoot).Path
-    $volumeMount = "${networkPath}/network/organizations:/etc/hyperledger/organizations"
-    $dockerClientHome = $ClientHome.Replace($networkPath + "\network\organizations", "/etc/hyperledger/organizations").Replace("\", "/")
-    
-    $dockerCmd = "docker run --rm --network $networkName -v ${volumeMount} -e FABRIC_CA_CLIENT_HOME=$dockerClientHome hyperledger/fabric-tools:2.5.3 fabric-ca-client $Command $AdditionalArgs"
-    
-    $result = Invoke-Expression $dockerCmd 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "fabric-ca-client command failed: $result"
-    }
-    return $result
+# Helper: convert local path to Docker path
+function To-DockerPath { param([string]$p) $p.Replace($orgsDir, "/etc/hyperledger/organizations").Replace("\", "/") }
+
+# Helper: run fabric-ca-client via Docker (pass args as you would to fabric-ca-client; paths and localhost URLs are converted)
+function Run-FabricCAClient {
+    param([string]$ClientHome, [string]$ArgsString)
+    $dp = (Resolve-Path $projectRoot).Path
+    $vol = "${dp}/network/organizations:/etc/hyperledger/organizations"
+    $clientD = To-DockerPath $ClientHome
+    $arg = $ArgsString.Replace($orgsDir, "/etc/hyperledger/organizations").Replace("\", "/")
+    $arg = $arg -replace "localhost:8054","ca-landreg:7054" -replace "localhost:9054","ca-subregistrar:7054" -replace "localhost:10054","ca-court:7054" -replace "localhost:7054","ca-orderer:7054"
+    $cmd = "docker run --rm --network $networkName -v ${vol} -e FABRIC_CA_CLIENT_HOME=$clientD hyperledger/fabric-ca:1.5.3 fabric-ca-client $arg"
+    Invoke-Expression $cmd
+    if ($LASTEXITCODE -ne 0) { throw "fabric-ca-client failed" }
 }
 
 # Colors for output
@@ -98,15 +93,9 @@ function Enroll-LandReg {
         New-Item -ItemType Directory -Path $orgDir -Force | Out-Null
     }
     
-    # Set FABRIC_CA_CLIENT_HOME
-    $env:FABRIC_CA_CLIENT_HOME = $orgDir
-    
     # Enroll CA admin
     Write-Info "Enrolling the CA admin for LandReg"
-    fabric-ca-client enroll `
-        -u "https://admin:adminpw@localhost:8054" `
-        --caname "ca-landreg" `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://admin:adminpw@localhost:8054 --caname ca-landreg --tls.certfiles $caCertPath"
     
     # Create MSP config.yaml
     New-MSPConfig -OrgDir $orgDir -CaCertPath $caCertPath -CaPort 8054 -CaName "ca-landreg"
@@ -126,39 +115,20 @@ function Enroll-LandReg {
     
     # Register identities
     Write-Info "Registering peer0 for LandReg"
-    fabric-ca-client register `
-        --caname "ca-landreg" `
-        --id.name "peer0" `
-        --id.secret "peer0pw" `
-        --id.type peer `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-landreg --id.name peer0 --id.secret peer0pw --id.type peer --tls.certfiles $caCertPath"
     
     Write-Info "Registering user1 for LandReg"
-    fabric-ca-client register `
-        --caname "ca-landreg" `
-        --id.name "user1" `
-        --id.secret "user1pw" `
-        --id.type client `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-landreg --id.name user1 --id.secret user1pw --id.type client --tls.certfiles $caCertPath"
     
     Write-Info "Registering org admin for LandReg"
-    fabric-ca-client register `
-        --caname "ca-landreg" `
-        --id.name "landregadmin" `
-        --id.secret "landregadminpw" `
-        --id.type admin `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-landreg --id.name landregadmin --id.secret landregadminpw --id.type admin --tls.certfiles $caCertPath"
     
     # Enroll peer0 MSP
     Write-Info "Generating the peer0 msp for LandReg"
     $peerMspDir = Join-Path $orgDir "peers" "peer0.landreg.example.com" "msp"
     New-Item -ItemType Directory -Path $peerMspDir -Force | Out-Null
     
-    fabric-ca-client enroll `
-        -u "https://peer0:peer0pw@localhost:8054" `
-        --caname "ca-landreg" `
-        -M $peerMspDir `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://peer0:peer0pw@localhost:8054 --caname ca-landreg -M $peerMspDir --tls.certfiles $caCertPath"
     
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $peerMspDir "config.yaml")
     
@@ -167,14 +137,7 @@ function Enroll-LandReg {
     $peerTlsDir = Join-Path $orgDir "peers" "peer0.landreg.example.com" "tls"
     New-Item -ItemType Directory -Path $peerTlsDir -Force | Out-Null
     
-    fabric-ca-client enroll `
-        -u "https://peer0:peer0pw@localhost:8054" `
-        --caname "ca-landreg" `
-        -M $peerTlsDir `
-        --enrollment.profile tls `
-        --csr.hosts "peer0.landreg.example.com" `
-        --csr.hosts "localhost" `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://peer0:peer0pw@localhost:8054 --caname ca-landreg -M $peerTlsDir --enrollment.profile tls --csr.hosts peer0.landreg.example.com --csr.hosts localhost --tls.certfiles $caCertPath"
     
     # Copy TLS certs to well-known names
     $tlsCaCerts = Get-ChildItem (Join-Path $peerTlsDir "tlscacerts") | Select-Object -First 1
@@ -190,11 +153,7 @@ function Enroll-LandReg {
     $userMspDir = Join-Path $orgDir "users" "User1@landreg.example.com" "msp"
     New-Item -ItemType Directory -Path $userMspDir -Force | Out-Null
     
-    fabric-ca-client enroll `
-        -u "https://user1:user1pw@localhost:8054" `
-        --caname "ca-landreg" `
-        -M $userMspDir `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://user1:user1pw@localhost:8054 --caname ca-landreg -M $userMspDir --tls.certfiles $caCertPath"
     
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $userMspDir "config.yaml")
     
@@ -203,11 +162,7 @@ function Enroll-LandReg {
     $adminMspDir = Join-Path $orgDir "users" "Admin@landreg.example.com" "msp"
     New-Item -ItemType Directory -Path $adminMspDir -Force | Out-Null
     
-    fabric-ca-client enroll `
-        -u "https://landregadmin:landregadminpw@localhost:8054" `
-        --caname "ca-landreg" `
-        -M $adminMspDir `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://landregadmin:landregadminpw@localhost:8054 --caname ca-landreg -M $adminMspDir --tls.certfiles $caCertPath"
     
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $adminMspDir "config.yaml")
     
@@ -226,13 +181,8 @@ function Enroll-SubRegistrar {
         New-Item -ItemType Directory -Path $orgDir -Force | Out-Null
     }
     
-    $env:FABRIC_CA_CLIENT_HOME = $orgDir
-    
     Write-Info "Enrolling the CA admin for SubRegistrar"
-    fabric-ca-client enroll `
-        -u "https://admin:adminpw@localhost:9054" `
-        --caname "ca-subregistrar" `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://admin:adminpw@localhost:9054 --caname ca-subregistrar --tls.certfiles $caCertPath"
     
     New-MSPConfig -OrgDir $orgDir -CaCertPath $caCertPath -CaPort 9054 -CaName "ca-subregistrar"
     
@@ -249,20 +199,20 @@ function Enroll-SubRegistrar {
     Copy-Item $caCertPath (Join-Path $caDir "ca.subregistrar.example.com-cert.pem")
     
     Write-Info "Registering identities for SubRegistrar"
-    fabric-ca-client register --caname "ca-subregistrar" --id.name "peer0" --id.secret "peer0pw" --id.type peer --tls.certfiles $caCertPath
-    fabric-ca-client register --caname "ca-subregistrar" --id.name "user1" --id.secret "user1pw" --id.type client --tls.certfiles $caCertPath
-    fabric-ca-client register --caname "ca-subregistrar" --id.name "subregistraradmin" --id.secret "subregistraradminpw" --id.type admin --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-subregistrar --id.name peer0 --id.secret peer0pw --id.type peer --tls.certfiles $caCertPath"
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-subregistrar --id.name user1 --id.secret user1pw --id.type client --tls.certfiles $caCertPath"
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-subregistrar --id.name subregistraradmin --id.secret subregistraradminpw --id.type admin --tls.certfiles $caCertPath"
     
     $peerMspDir = Join-Path $orgDir "peers" "peer0.subregistrar.example.com" "msp"
     New-Item -ItemType Directory -Path $peerMspDir -Force | Out-Null
     
-    fabric-ca-client enroll -u "https://peer0:peer0pw@localhost:9054" --caname "ca-subregistrar" -M $peerMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://peer0:peer0pw@localhost:9054 --caname ca-subregistrar -M $peerMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $peerMspDir "config.yaml")
     
     $peerTlsDir = Join-Path $orgDir "peers" "peer0.subregistrar.example.com" "tls"
     New-Item -ItemType Directory -Path $peerTlsDir -Force | Out-Null
     
-    fabric-ca-client enroll -u "https://peer0:peer0pw@localhost:9054" --caname "ca-subregistrar" -M $peerTlsDir --enrollment.profile tls --csr.hosts "peer0.subregistrar.example.com" --csr.hosts "localhost" --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://peer0:peer0pw@localhost:9054 --caname ca-subregistrar -M $peerTlsDir --enrollment.profile tls --csr.hosts peer0.subregistrar.example.com --csr.hosts localhost --tls.certfiles $caCertPath"
     
     $tlsCaCerts = Get-ChildItem (Join-Path $peerTlsDir "tlscacerts") | Select-Object -First 1
     $tlsSignCerts = Get-ChildItem (Join-Path $peerTlsDir "signcerts") | Select-Object -First 1
@@ -274,12 +224,12 @@ function Enroll-SubRegistrar {
     
     $userMspDir = Join-Path $orgDir "users" "User1@subregistrar.example.com" "msp"
     New-Item -ItemType Directory -Path $userMspDir -Force | Out-Null
-    fabric-ca-client enroll -u "https://user1:user1pw@localhost:9054" --caname "ca-subregistrar" -M $userMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://user1:user1pw@localhost:9054 --caname ca-subregistrar -M $userMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $userMspDir "config.yaml")
     
     $adminMspDir = Join-Path $orgDir "users" "Admin@subregistrar.example.com" "msp"
     New-Item -ItemType Directory -Path $adminMspDir -Force | Out-Null
-    fabric-ca-client enroll -u "https://subregistraradmin:subregistraradminpw@localhost:9054" --caname "ca-subregistrar" -M $adminMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://subregistraradmin:subregistraradminpw@localhost:9054 --caname ca-subregistrar -M $adminMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $adminMspDir "config.yaml")
     
     Write-Success "SubRegistrar organization enrolled successfully"
@@ -297,13 +247,8 @@ function Enroll-Court {
         New-Item -ItemType Directory -Path $orgDir -Force | Out-Null
     }
     
-    $env:FABRIC_CA_CLIENT_HOME = $orgDir
-    
     Write-Info "Enrolling the CA admin for Court"
-    fabric-ca-client enroll `
-        -u "https://admin:adminpw@localhost:10054" `
-        --caname "ca-court" `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://admin:adminpw@localhost:10054 --caname ca-court --tls.certfiles $caCertPath"
     
     New-MSPConfig -OrgDir $orgDir -CaCertPath $caCertPath -CaPort 10054 -CaName "ca-court"
     
@@ -320,18 +265,18 @@ function Enroll-Court {
     Copy-Item $caCertPath (Join-Path $caDir "ca.court.example.com-cert.pem")
     
     Write-Info "Registering identities for Court"
-    fabric-ca-client register --caname "ca-court" --id.name "peer0" --id.secret "peer0pw" --id.type peer --tls.certfiles $caCertPath
-    fabric-ca-client register --caname "ca-court" --id.name "user1" --id.secret "user1pw" --id.type client --tls.certfiles $caCertPath
-    fabric-ca-client register --caname "ca-court" --id.name "courtadmin" --id.secret "courtadminpw" --id.type admin --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-court --id.name peer0 --id.secret peer0pw --id.type peer --tls.certfiles $caCertPath"
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-court --id.name user1 --id.secret user1pw --id.type client --tls.certfiles $caCertPath"
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-court --id.name courtadmin --id.secret courtadminpw --id.type admin --tls.certfiles $caCertPath"
     
     $peerMspDir = Join-Path $orgDir "peers" "peer0.court.example.com" "msp"
     New-Item -ItemType Directory -Path $peerMspDir -Force | Out-Null
-    fabric-ca-client enroll -u "https://peer0:peer0pw@localhost:10054" --caname "ca-court" -M $peerMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://peer0:peer0pw@localhost:10054 --caname ca-court -M $peerMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $peerMspDir "config.yaml")
     
     $peerTlsDir = Join-Path $orgDir "peers" "peer0.court.example.com" "tls"
     New-Item -ItemType Directory -Path $peerTlsDir -Force | Out-Null
-    fabric-ca-client enroll -u "https://peer0:peer0pw@localhost:10054" --caname "ca-court" -M $peerTlsDir --enrollment.profile tls --csr.hosts "peer0.court.example.com" --csr.hosts "localhost" --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://peer0:peer0pw@localhost:10054 --caname ca-court -M $peerTlsDir --enrollment.profile tls --csr.hosts peer0.court.example.com --csr.hosts localhost --tls.certfiles $caCertPath"
     
     $tlsCaCerts = Get-ChildItem (Join-Path $peerTlsDir "tlscacerts") | Select-Object -First 1
     $tlsSignCerts = Get-ChildItem (Join-Path $peerTlsDir "signcerts") | Select-Object -First 1
@@ -343,12 +288,12 @@ function Enroll-Court {
     
     $userMspDir = Join-Path $orgDir "users" "User1@court.example.com" "msp"
     New-Item -ItemType Directory -Path $userMspDir -Force | Out-Null
-    fabric-ca-client enroll -u "https://user1:user1pw@localhost:10054" --caname "ca-court" -M $userMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://user1:user1pw@localhost:10054 --caname ca-court -M $userMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $userMspDir "config.yaml")
     
     $adminMspDir = Join-Path $orgDir "users" "Admin@court.example.com" "msp"
     New-Item -ItemType Directory -Path $adminMspDir -Force | Out-Null
-    fabric-ca-client enroll -u "https://courtadmin:courtadminpw@localhost:10054" --caname "ca-court" -M $adminMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://courtadmin:courtadminpw@localhost:10054 --caname ca-court -M $adminMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $adminMspDir "config.yaml")
     
     Write-Success "Court organization enrolled successfully"
@@ -366,13 +311,8 @@ function Enroll-Orderer {
         New-Item -ItemType Directory -Path $orgDir -Force | Out-Null
     }
     
-    $env:FABRIC_CA_CLIENT_HOME = $orgDir
-    
     Write-Info "Enrolling the CA admin for Orderer"
-    fabric-ca-client enroll `
-        -u "https://admin:adminpw@localhost:7054" `
-        --caname "ca-orderer" `
-        --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://admin:adminpw@localhost:7054 --caname ca-orderer --tls.certfiles $caCertPath"
     
     New-MSPConfig -OrgDir $orgDir -CaCertPath $caCertPath -CaPort 7054 -CaName "ca-orderer"
     
@@ -387,13 +327,13 @@ function Enroll-Orderer {
     
     # Register and enroll orderer
     Write-Info "Registering orderer"
-    fabric-ca-client register --caname "ca-orderer" --id.name "orderer" --id.secret "ordererpw" --id.type orderer --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-orderer --id.name orderer --id.secret ordererpw --id.type orderer --tls.certfiles $caCertPath"
     
     Write-Info "Generating the orderer MSP"
     $ordererMspDir = Join-Path $orgDir "orderers" "orderer.example.com" "msp"
     New-Item -ItemType Directory -Path $ordererMspDir -Force | Out-Null
     
-    fabric-ca-client enroll -u "https://orderer:ordererpw@localhost:7054" --caname "ca-orderer" -M $ordererMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://orderer:ordererpw@localhost:7054 --caname ca-orderer -M $ordererMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $ordererMspDir "config.yaml")
     
     # Rename signcert to match expected name
@@ -408,7 +348,7 @@ function Enroll-Orderer {
     $ordererTlsDir = Join-Path $orgDir "orderers" "orderer.example.com" "tls"
     New-Item -ItemType Directory -Path $ordererTlsDir -Force | Out-Null
     
-    fabric-ca-client enroll -u "https://orderer:ordererpw@localhost:7054" --caname "ca-orderer" -M $ordererTlsDir --enrollment.profile tls --csr.hosts "orderer.example.com" --csr.hosts "localhost" --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://orderer:ordererpw@localhost:7054 --caname ca-orderer -M $ordererTlsDir --enrollment.profile tls --csr.hosts orderer.example.com --csr.hosts localhost --tls.certfiles $caCertPath"
     
     $tlsCaCerts = Get-ChildItem (Join-Path $ordererTlsDir "tlscacerts") | Select-Object -First 1
     $tlsSignCerts = Get-ChildItem (Join-Path $ordererTlsDir "signcerts") | Select-Object -First 1
@@ -425,12 +365,12 @@ function Enroll-Orderer {
     
     # Register and enroll orderer admin
     Write-Info "Registering the orderer admin"
-    fabric-ca-client register --caname "ca-orderer" --id.name "ordererAdmin" --id.secret "ordererAdminpw" --id.type admin --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "register --caname ca-orderer --id.name ordererAdmin --id.secret ordererAdminpw --id.type admin --tls.certfiles $caCertPath"
     
     Write-Info "Generating the admin msp"
     $adminMspDir = Join-Path $orgDir "users" "Admin@example.com" "msp"
     New-Item -ItemType Directory -Path $adminMspDir -Force | Out-Null
-    fabric-ca-client enroll -u "https://ordererAdmin:ordererAdminpw@localhost:7054" --caname "ca-orderer" -M $adminMspDir --tls.certfiles $caCertPath
+    Run-FabricCAClient -ClientHome $orgDir -ArgsString "enroll -u https://ordererAdmin:ordererAdminpw@localhost:7054 --caname ca-orderer -M $adminMspDir --tls.certfiles $caCertPath"
     Copy-Item (Join-Path $orgDir "msp" "config.yaml") (Join-Path $adminMspDir "config.yaml")
     
     Write-Success "Orderer organization enrolled successfully"

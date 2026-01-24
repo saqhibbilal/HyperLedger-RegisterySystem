@@ -22,7 +22,7 @@ services:
     ports:
       - "7054:7054"
       - "17054:17054"
-    command: sh -c 'fabric-ca-server start -b admin:adminpw -d'
+    command: sh -c 'fabric-ca-server start -b admin:adminpw -d --csr.hosts ca-orderer --csr.hosts localhost'
     volumes:
       - ./organizations/fabric-ca/ordererOrg/:/etc/hyperledger/fabric-ca-server-config
     networks:
@@ -46,7 +46,7 @@ services:
     ports:
       - "8054:7054"
       - "18054:17054"
-    command: sh -c 'fabric-ca-server start -b admin:adminpw -d'
+    command: sh -c 'fabric-ca-server start -b admin:adminpw -d --csr.hosts ca-landreg --csr.hosts localhost'
     volumes:
       - ./organizations/fabric-ca/landreg/:/etc/hyperledger/fabric-ca-server-config
     networks:
@@ -94,7 +94,7 @@ services:
     ports:
       - "10054:7054"
       - "20054:17054"
-    command: sh -c 'fabric-ca-server start -b admin:adminpw -d'
+    command: sh -c 'fabric-ca-server start -b admin:adminpw -d --csr.hosts ca-court --csr.hosts localhost'
     volumes:
       - ./organizations/fabric-ca/court/:/etc/hyperledger/fabric-ca-server-config
     networks:

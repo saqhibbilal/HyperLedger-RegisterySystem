@@ -63,7 +63,7 @@ function Invoke-FabricCAClient {
     param(
         [string]$Command,
         [string]$WorkingDir,
-        [string]$NetworkName = "landregistry_landregistry"
+        [string]$NetworkName = "network_landregistry"
     )
     
     $networkPath = (Resolve-Path $projectRoot).Path
@@ -84,7 +84,7 @@ function Wait-ForCATLSCert {
         [int]$DelaySeconds = 2
     )
     
-    $tlsCertPath = Join-Path $fabricCaDir $CaOrg "tls-cert.pem"
+    $tlsCertPath = Join-Path (Join-Path $fabricCaDir $CaOrg) "tls-cert.pem"
     $retries = 0
     
     Write-Info "Waiting for CA $CaOrg to create tls-cert.pem..."
@@ -144,7 +144,7 @@ function Get-CACertificate {
             $caContainer = $caContainerMap[$CaOrg]
             
             # Inside Docker network, all CAs listen on port 7054
-            $dockerCmd = "docker run --rm --network landregistry_landregistry -v ${volumeMount} -e FABRIC_CA_CLIENT_HOME=$fabricCaClientHome hyperledger/fabric-tools:2.5.3 fabric-ca-client getcainfo -u https://admin:adminpw@${caContainer}:7054 --caname $CaName --tls.certfiles $tlsCertPathDocker"
+            $dockerCmd = "docker run --rm --network network_landregistry -v ${volumeMount} -e FABRIC_CA_CLIENT_HOME=$fabricCaClientHome hyperledger/fabric-tools:2.5.3 fabric-ca-client getcainfo -u https://admin:adminpw@${caContainer}:7054 --caname $CaName --tls.certfiles $tlsCertPathDocker"
             
             $result = Invoke-Expression $dockerCmd 2>&1
             
