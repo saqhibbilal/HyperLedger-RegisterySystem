@@ -25,11 +25,15 @@ Start-Sleep -Seconds 10
 Write-Host "  [OK] CAs ready" -ForegroundColor Green
 Write-Host ""
 
-# Organizations to process
+# Detect Docker network (project may be 'network' or 'consortium' depending on how compose was started)
+$dockerNet = (docker inspect ca-orderer --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>$null)
+if (-not $dockerNet) { $dockerNet = "network_landregistry" }
+
+# Organizations to process (Port 7054 = container internal port for all CAs when using Docker network)
 $orgs = @(
-    @{Name="landreg"; CA="ca-landreg"; Port="7054"; MSP="LandRegMSP"; CAUrl="https://ca-landreg:7054"},
-    @{Name="subregistrar"; CA="ca-subregistrar"; Port="8054"; MSP="SubRegistrarMSP"; CAUrl="https://ca-subregistrar:8054"},
-    @{Name="court"; CA="ca-court"; Port="9054"; MSP="CourtMSP"; CAUrl="https://ca-court:9054"}
+    @{Name="landreg"; CA="ca-landreg"; Port="7054"; MSP="LandRegMSP"},
+    @{Name="subregistrar"; CA="ca-subregistrar"; Port="7054"; MSP="SubRegistrarMSP"},
+    @{Name="court"; CA="ca-court"; Port="7054"; MSP="CourtMSP"}
 )
 
 Write-Host "[3/4] Enrolling admin users..." -ForegroundColor Green
@@ -37,41 +41,68 @@ Write-Host "[3/4] Enrolling admin users..." -ForegroundColor Green
 foreach ($org in $orgs) {
     Write-Host "  Processing $($org.Name) organization..." -ForegroundColor Yellow
     
+    $orgMsp = "$networkPath/organizations/peerOrganizations/$($org.Name).example.com/msp"
     $adminMsp = "$networkPath/organizations/peerOrganizations/$($org.Name).example.com/users/Admin@$($org.Name).example.com/msp"
     $peerMsp = "$networkPath/organizations/peerOrganizations/$($org.Name).example.com/peers/peer0.$($org.Name).example.com/msp"
-    
-    # Try to get CA certificate from container
-    $caCertPath = "$networkPath/organizations/peerOrganizations/$($org.Name).example.com/ca/ca-cert.pem"
-    $caCertDir = Split-Path $caCertPath -Parent
+    $caCertDir = "$networkPath/organizations/peerOrganizations/$($org.Name).example.com/ca"
+    $tlsCertPath = "$caCertDir/tls-cert.pem"
+    $caCertPath = "$caCertDir/ca-cert.pem"
+    $tlsCertInContainer = "/etc/hyperledger/fabric-ca-client-config/peerOrganizations/$($org.Name).example.com/ca/tls-cert.pem"
+
     New-Item -ItemType Directory -Force -Path $caCertDir | Out-Null
-    
-    # Copy CA cert from container
-    Write-Host "    Copying CA certificate..." -ForegroundColor Gray
+    New-Item -ItemType Directory -Force -Path "$orgMsp/cacerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$orgMsp/tlscacerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$adminMsp/cacerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$adminMsp/tlscacerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$adminMsp/admincerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$peerMsp/cacerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$peerMsp/tlscacerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$peerMsp/admincerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$peerMsp/signcerts" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$peerMsp/keystore" | Out-Null
+
+    # Get CA TLS cert from container or from host (CA writes to fabric-ca/org/ on the mounted volume)
+    Write-Host "    Copying CA TLS certificate..." -ForegroundColor Gray
+    docker cp "${org.CA}:/etc/hyperledger/fabric-ca-server-config/tls-cert.pem" $tlsCertPath 2>&1 | Out-Null
     docker cp "${org.CA}:/etc/hyperledger/fabric-ca-server-config/ca-cert.pem" $caCertPath 2>&1 | Out-Null
-    
-    if (Test-Path $caCertPath) {
-        # Copy CA cert to MSP cacerts
-        Copy-Item $caCertPath "$adminMsp/cacerts/ca.crt" -Force
-        Copy-Item $caCertPath "$peerMsp/cacerts/ca.crt" -Force
-        Copy-Item $caCertPath "$adminMsp/tlscacerts/ca.crt" -Force
-        Copy-Item $caCertPath "$peerMsp/tlscacerts/ca.crt" -Force
-        
-        Write-Host "    [OK] CA certificate copied" -ForegroundColor Gray
+    if (-not (Test-Path $tlsCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/$($org.Name)/tls-cert.pem")) {
+        Copy-Item "$networkPath/organizations/fabric-ca/$($org.Name)/tls-cert.pem" $tlsCertPath -Force
     }
-    
-    # Enroll admin using fabric-tools container
+    if (-not (Test-Path $caCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/$($org.Name)/ca-cert.pem")) {
+        Copy-Item "$networkPath/organizations/fabric-ca/$($org.Name)/ca-cert.pem" $caCertPath -Force
+    }
+
+    $certToUse = if (Test-Path $caCertPath) { $caCertPath } elseif (Test-Path $tlsCertPath) { $tlsCertPath } else { $null }
+    if ($certToUse) {
+        Copy-Item $certToUse "$orgMsp/cacerts/ca.crt" -Force
+        Copy-Item $certToUse "$orgMsp/tlscacerts/ca.crt" -Force
+        Copy-Item $certToUse "$adminMsp/cacerts/ca.crt" -Force
+        Copy-Item $certToUse "$peerMsp/cacerts/ca.crt" -Force
+        Copy-Item $certToUse "$adminMsp/tlscacerts/ca.crt" -Force
+        Copy-Item $certToUse "$peerMsp/tlscacerts/ca.crt" -Force
+        Write-Host "    [OK] CA certificate ready" -ForegroundColor Gray
+    }
+
+    # Enroll: --tls.certfiles must point to a path inside the mounted volume (fabric-tools has no fabric-ca-server-config)
+    $tlsForEnroll = if (Test-Path $tlsCertPath) { $tlsCertInContainer } else { $null }
+    if (-not $tlsForEnroll) {
+        Write-Host "    [WARN] tls-cert.pem not found, skipping enroll for $($org.Name)" -ForegroundColor Yellow
+        Write-Host ""
+        continue
+    }
+
     Write-Host "    Enrolling admin user..." -ForegroundColor Gray
-    
+    # Build URL with concatenation and pass via env to avoid PowerShell/Docker dropping CA hostname (https://:7054)
+    $caHost = $org.CA
+    $enrollUrl = 'https://admin:adminpw@' + $caHost + ':' + $org.Port
+    $shCmd = 'fabric-ca-client enroll -u "$ENROLL_URL" --caname ca-' + $org.Name + ' --tls.certfiles ' + $tlsForEnroll + ' -M /etc/hyperledger/fabric-ca-client-config/peerOrganizations/' + $org.Name + '.example.com/users/Admin@' + $org.Name + '.example.com/msp'
     $enrollResult = docker run --rm `
-      --network network_landregistry `
+      --network $dockerNet `
       -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
       -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config `
-      hyperledger/fabric-tools:2.5.3 `
-      fabric-ca-client enroll `
-      -u https://admin:adminpw@${org.CA}:${org.Port} `
-      --caname ca-$($org.Name) `
-      --tls.certfiles /etc/hyperledger/fabric-ca-server-config/ca-cert.pem `
-      -M /etc/hyperledger/fabric-ca-client-config/peerOrganizations/$($org.Name).example.com/users/Admin@$($org.Name).example.com/msp 2>&1
+      -e "ENROLL_URL=$enrollUrl" `
+      hyperledger/fabric-ca:1.5.3 `
+      sh -c $shCmd 2>&1
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "    [OK] Admin enrolled" -ForegroundColor Green
@@ -92,38 +123,158 @@ foreach ($org in $orgs) {
         Write-Host "    [OK] Certificates copied to peer MSP" -ForegroundColor Green
     } else {
         Write-Host "    [WARN] Enrollment failed, using structure only" -ForegroundColor Yellow
-        Write-Host "    Error details logged" -ForegroundColor Gray
+        if ($enrollResult) { Write-Host "    $enrollResult" -ForegroundColor Gray }
     }
     
     Write-Host ""
 }
 
-# Enroll orderer admin
+# Orderer org: CA cert, then register+enroll orderer with TLS (configtx needs orderers/.../tls/server.crt)
 Write-Host "  Processing Orderer organization..." -ForegroundColor Yellow
 $ordererMsp = "$networkPath/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp"
 $ordererAdminMsp = "$networkPath/organizations/ordererOrganizations/example.com/users/Admin@example.com/msp"
+$ordererCaDir = "$networkPath/organizations/ordererOrganizations/example.com/ca"
+$ordererTlsDir = "$networkPath/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls"
+$ordererTlsCertPath = "$ordererCaDir/tls-cert.pem"
+$ordererCaCertPath = "$ordererCaDir/ca-cert.pem"
+# test-network uses ca-cert.pem for --tls.certfiles; fall back to tls-cert.pem
+$ordererTlsInContainer = "/etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com/ca/tls-cert.pem"
+$ordererCaCertInContainer = "/etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com/ca/ca-cert.pem"
 
+$ordererOrgMsp = "$networkPath/organizations/ordererOrganizations/example.com/msp"
 New-Item -ItemType Directory -Force -Path "$ordererAdminMsp/signcerts" | Out-Null
 New-Item -ItemType Directory -Force -Path "$ordererAdminMsp/keystore" | Out-Null
 New-Item -ItemType Directory -Force -Path "$ordererAdminMsp/cacerts" | Out-Null
+New-Item -ItemType Directory -Force -Path $ordererCaDir | Out-Null
+New-Item -ItemType Directory -Force -Path "$ordererMsp/cacerts" | Out-Null
+New-Item -ItemType Directory -Force -Path "$ordererOrgMsp/cacerts" | Out-Null
+New-Item -ItemType Directory -Force -Path "$ordererOrgMsp/tlscacerts" | Out-Null
+New-Item -ItemType Directory -Force -Path $ordererTlsDir | Out-Null
 
-$ordererCaCertPath = "$networkPath/organizations/ordererOrganizations/example.com/ca/ca-cert.pem"
-$ordererCaCertDir = Split-Path $ordererCaCertPath -Parent
-New-Item -ItemType Directory -Force -Path $ordererCaCertDir | Out-Null
-
+docker cp "ca-orderer:/etc/hyperledger/fabric-ca-server-config/tls-cert.pem" $ordererTlsCertPath 2>&1 | Out-Null
 docker cp "ca-orderer:/etc/hyperledger/fabric-ca-server-config/ca-cert.pem" $ordererCaCertPath 2>&1 | Out-Null
+if (-not (Test-Path $ordererTlsCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/ordererOrg/tls-cert.pem")) {
+    Copy-Item "$networkPath/organizations/fabric-ca/ordererOrg/tls-cert.pem" $ordererTlsCertPath -Force
+}
+if (-not (Test-Path $ordererCaCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/ordererOrg/ca-cert.pem")) {
+    Copy-Item "$networkPath/organizations/fabric-ca/ordererOrg/ca-cert.pem" $ordererCaCertPath -Force
+}
 
+$ordererCert = if (Test-Path $ordererCaCertPath) { $ordererCaCertPath } elseif (Test-Path $ordererTlsCertPath) { $ordererTlsCertPath } else { $null }
+if ($ordererCert) {
+    Copy-Item $ordererCert "$ordererMsp/cacerts/ca.crt" -Force
+    Copy-Item $ordererCert "$ordererAdminMsp/cacerts/ca.crt" -Force
+    Copy-Item $ordererCert "$ordererOrgMsp/cacerts/ca.crt" -Force
+    Copy-Item $ordererCert "$ordererOrgMsp/tlscacerts/ca.crt" -Force
+    Write-Host "    [OK] Orderer CA certificate ready" -ForegroundColor Green
+}
+
+# Orderer flow aligned with test-network organizations/fabric-ca/registerEnroll.sh createOrderer():
+# 1) Enroll "CA admin" to org msp (so register can use it with no -u); 2) Register orderer (no -u);
+# 3) Enroll orderer MSP + TLS; 4) Copy tls to server.crt/key/ca.crt; 5) Register+enroll Admin@example.com
+# test-network uses ca-cert.pem for --tls.certfiles (not tls-cert.pem)
+$ordererTlsCertfiles = if (Test-Path $ordererCaCertPath) { $ordererCaCertInContainer } else { $ordererTlsInContainer }
 if (Test-Path $ordererCaCertPath) {
-    Copy-Item $ordererCaCertPath "$ordererMsp/cacerts/ca.crt" -Force
-    Copy-Item $ordererCaCertPath "$ordererAdminMsp/cacerts/ca.crt" -Force
-    Write-Host "    [OK] Orderer CA certificate copied" -ForegroundColor Green
+    Write-Host "    Using ca-cert.pem for orderer CA client (test-network convention)" -ForegroundColor Gray
+} elseif (-not (Test-Path $ordererTlsCertPath)) {
+    Write-Host "    [WARN] Orderer CA ca-cert.pem and tls-cert.pem not found; orderer TLS not generated" -ForegroundColor Yellow
+}
+
+if ((Test-Path $ordererCaCertPath) -or (Test-Path $ordererTlsCertPath)) {
+    # 1) Enroll "CA admin" to .../example.com/msp (like test-network: identity used by register with no -u)
+    Write-Host "    Enrolling orderer CA admin to org msp..." -ForegroundColor Gray
+    $adminEnrollOut = docker run --rm --network $dockerNet `
+      -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+      -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com `
+      hyperledger/fabric-ca:1.5.3 `
+      fabric-ca-client enroll -u "https://admin:adminpw@ca-orderer:7054" --caname ca-orderer `
+      -M /etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com/msp `
+      --tls.certfiles $ordererTlsCertfiles 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Host "    [WARN] Orderer CA admin enroll: $adminEnrollOut" -ForegroundColor Yellow }
+    # Re-apply org CA cert to msp (enroll may have overwritten)
+    if ($ordererCert) {
+        Copy-Item $ordererCert "$ordererOrgMsp/cacerts/ca.crt" -Force
+        Copy-Item $ordererCert "$ordererOrgMsp/tlscacerts/ca.crt" -Force
+    }
+
+    # 2) Register orderer (no -u: use enrolled CA admin from FABRIC_CA_CLIENT_HOME, like test-network)
+    Write-Host "    Registering orderer..." -ForegroundColor Gray
+    $regOut = docker run --rm --network $dockerNet `
+      -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+      -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com `
+      hyperledger/fabric-ca:1.5.3 `
+      fabric-ca-client register --caname ca-orderer --id.name orderer --id.secret ordererpw --id.type orderer `
+      --tls.certfiles $ordererTlsCertfiles 2>&1
+    if ($LASTEXITCODE -ne 0 -and $regOut -notmatch "already registered") {
+        Write-Host "    [WARN] Orderer register: $regOut" -ForegroundColor Yellow
+        Write-Host "    [INFO] For a clean slate: Remove-Item -Recurse -Force network\organizations\fabric-ca\ordererOrg; restart ca-orderer; re-run." -ForegroundColor Yellow
+    }
+
+    $ordererMspInContainer = "/etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com/orderers/orderer.example.com/msp"
+    $ordererTlsMspInContainer = "/etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com/orderers/orderer.example.com/tls"
+
+    Get-ChildItem $ordererTlsDir -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    # 3) Enroll orderer MSP and TLS (like test-network)
+    Write-Host "    Enrolling orderer MSP and TLS..." -ForegroundColor Gray
+    $mspOut = docker run --rm --network $dockerNet `
+      -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+      -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config `
+      hyperledger/fabric-ca:1.5.3 `
+      fabric-ca-client enroll -u "https://orderer:ordererpw@ca-orderer:7054" --caname ca-orderer `
+      -M $ordererMspInContainer --tls.certfiles $ordererTlsCertfiles 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Host "    [WARN] Orderer MSP enroll: $mspOut" -ForegroundColor Yellow }
+
+    $tlsOut = docker run --rm --network $dockerNet `
+      -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+      -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config `
+      hyperledger/fabric-ca:1.5.3 `
+      fabric-ca-client enroll -u "https://orderer:ordererpw@ca-orderer:7054" --caname ca-orderer `
+      -M $ordererTlsMspInContainer `
+      --enrollment.profile tls --csr.hosts orderer.example.com --csr.hosts localhost `
+      --tls.certfiles $ordererTlsCertfiles 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Host "    [WARN] Orderer TLS enroll: $tlsOut" -ForegroundColor Yellow }
+
+    # 4) Copy to server.crt, server.key, ca.crt (like test-network registerEnroll.sh)
+    $ot = "$ordererTlsDir"
+    $sc = Get-ChildItem "$ot/signcerts" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $ks = Get-ChildItem "$ot/keystore" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $tc = Get-ChildItem "$ot/tlscacerts" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $sc) { $sc = Get-ChildItem "$ot" -Filter "*.pem" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+    if ($sc) { Copy-Item $sc.FullName "$ot/server.crt" -Force }
+    if ($ks) { Copy-Item $ks.FullName "$ot/server.key" -Force }
+    if ($tc) { Copy-Item $tc.FullName "$ot/ca.crt" -Force }
+    if (-not (Test-Path "$ot/ca.crt") -and (Test-Path $ordererTlsCertPath)) { Copy-Item $ordererTlsCertPath "$ot/ca.crt" -Force }
+    if ((Test-Path "$ot/server.crt") -and (Test-Path "$ot/server.key") -and (Test-Path "$ot/ca.crt")) {
+        Write-Host "    [OK] Orderer TLS (server.crt, server.key, ca.crt) ready" -ForegroundColor Green
+    } else {
+        Write-Host "    [WARN] Orderer TLS incomplete; genesis may fail" -ForegroundColor Yellow
+        if (-not (Test-Path "$ot/server.crt")) { Write-Host "      Missing: $ot/server.crt" -ForegroundColor Gray }
+    }
+
+    # 5) Register and enroll Admin@example.com (like test-network, done after orderer)
+    Write-Host "    Registering and enrolling orderer Admin@example.com..." -ForegroundColor Gray
+    docker run --rm --network $dockerNet `
+      -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+      -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com `
+      hyperledger/fabric-ca:1.5.3 `
+      fabric-ca-client register --caname ca-orderer --id.name ordererAdmin --id.secret ordererAdminpw --id.type admin `
+      --tls.certfiles $ordererTlsCertfiles 2>&1 | Out-Null
+    $adminOut = docker run --rm --network $dockerNet `
+      -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+      -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config `
+      hyperledger/fabric-ca:1.5.3 `
+      fabric-ca-client enroll -u "https://ordererAdmin:ordererAdminpw@ca-orderer:7054" --caname ca-orderer `
+      -M /etc/hyperledger/fabric-ca-client-config/ordererOrganizations/example.com/users/Admin@example.com/msp `
+      --tls.certfiles $ordererTlsCertfiles 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Host "    [WARN] Orderer Admin@example.com enroll: $adminOut" -ForegroundColor Yellow }
 }
 
 Write-Host ""
 
 Write-Host "[4/4] Summary" -ForegroundColor Green
 Write-Host "  [OK] Crypto enrollment attempted" -ForegroundColor Gray
-Write-Host "  [INFO] Check logs if enrollment failed" -ForegroundColor Yellow
+Write-Host "  [INFO] If orderer enroll fails with 'Authentication failure', delete network\organizations\fabric-ca\ordererOrg, restart ca-orderer, then re-run." -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Next: Generate genesis block and start network" -ForegroundColor Yellow
 Write-Host "      .\scripts\generate-genesis-block.ps1" -ForegroundColor White
