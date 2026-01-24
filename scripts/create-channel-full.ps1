@@ -34,27 +34,31 @@ Write-Host "[3/5] Creating channel creation transaction..." -ForegroundColor Gre
 $networkPath = (Resolve-Path "network").Path
 $configtxPath = "$networkPath/configtx"
 $channelArtifactsPath = "$networkPath/channel-artifacts"
+$organizationsPath = "$networkPath/organizations"
+
+if (-not (Test-Path $channelArtifactsPath)) {
+    New-Item -ItemType Directory -Path $channelArtifactsPath -Force | Out-Null
+}
 
 try {
-    $dockerCommand = @(
-        "run --rm",
-        "-v ${networkPath}:/etc/hyperledger/configtx",
-        "-v ${channelArtifactsPath}:/etc/hyperledger/channel-artifacts",
-        "hyperledger/fabric-tools:2.5.3",
-        "configtxgen",
-        "-profile LandRegistryChannel",
-        "-channelID $CHANNEL_NAME",
-        "-outputCreateChannelTx /etc/hyperledger/channel-artifacts/$CHANNEL_NAME.tx",
-        "-configPath /etc/hyperledger/configtx"
-    )
-    
     Write-Host "  Generating channel transaction..." -ForegroundColor Gray
-    docker $dockerCommand 2>&1 | Out-Null
+    $result = docker run --rm `
+        -v "${configtxPath}:/etc/hyperledger/configtx" `
+        -v "${organizationsPath}:/etc/hyperledger/organizations" `
+        -v "${channelArtifactsPath}:/etc/hyperledger/channel-artifacts" `
+        -e FABRIC_CFG_PATH=/etc/hyperledger/configtx `
+        hyperledger/fabric-tools:2.5.3 `
+        configtxgen `
+        -profile LandRegistryChannel `
+        -channelID $CHANNEL_NAME `
+        -outputCreateChannelTx /etc/hyperledger/channel-artifacts/$CHANNEL_NAME.tx `
+        -configPath /etc/hyperledger/configtx 2>&1
     
     if ($LASTEXITCODE -eq 0 -and (Test-Path "network/channel-artifacts/$CHANNEL_NAME.tx")) {
         Write-Host "  [OK] Channel creation transaction generated" -ForegroundColor Green
     } else {
         Write-Host "  [FAIL] Failed to generate channel transaction" -ForegroundColor Red
+        if ($result) { Write-Host "  Error: $result" -ForegroundColor Red }
         exit 1
     }
 } catch {

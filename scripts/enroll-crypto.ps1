@@ -121,6 +121,47 @@ foreach ($org in $orgs) {
         }
         
         Write-Host "    [OK] Certificates copied to peer MSP" -ForegroundColor Green
+
+        # Register and enroll peer0, create peer TLS (server.crt, server.key, ca.crt) so the peer container can start
+        $peerTlsDir = "$networkPath/organizations/peerOrganizations/$($org.Name).example.com/peers/peer0.$($org.Name).example.com/tls"
+        $peerTlsInContainer = "/etc/hyperledger/fabric-ca-client-config/peerOrganizations/$($org.Name).example.com/peers/peer0.$($org.Name).example.com/tls"
+
+        Write-Host "    Registering peer0..." -ForegroundColor Gray
+        $regPeer = docker run --rm --network $dockerNet `
+          -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+          -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config `
+          hyperledger/fabric-ca:1.5.3 `
+          fabric-ca-client register -u "https://admin:adminpw@$($org.CA):$($org.Port)" --caname ca-$($org.Name) --id.name peer0 --id.secret peer0pw --id.type peer `
+          --tls.certfiles $tlsForEnroll 2>&1
+        if ($LASTEXITCODE -ne 0 -and $regPeer -notmatch "already registered") {
+            Write-Host "    [WARN] peer0 register: $regPeer" -ForegroundColor Yellow
+        }
+
+        Write-Host "    Enrolling peer0 TLS..." -ForegroundColor Gray
+        docker run --rm --network $dockerNet `
+          -v "${networkPath}/organizations:/etc/hyperledger/fabric-ca-client-config" `
+          -e FABRIC_CA_CLIENT_HOME=/etc/hyperledger/fabric-ca-client-config `
+          hyperledger/fabric-ca:1.5.3 `
+          fabric-ca-client enroll -u "https://peer0:peer0pw@$($org.CA):$($org.Port)" --caname ca-$($org.Name) `
+          -M $peerTlsInContainer --enrollment.profile tls --csr.hosts "peer0.$($org.Name).example.com" `
+          --tls.certfiles $tlsForEnroll 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Write-Host "    [WARN] peer0 TLS enroll failed (peer may not start)" -ForegroundColor Yellow }
+
+        # Copy TLS enroll output to server.crt, server.key, ca.crt (peer expects these in tls/)
+        $sc = Get-ChildItem "$peerTlsDir/signcerts" -ErrorAction SilentlyContinue | Select-Object -First 1
+        $ks = Get-ChildItem "$peerTlsDir/keystore" -ErrorAction SilentlyContinue | Select-Object -First 1
+        $tc = Get-ChildItem "$peerTlsDir/tlscacerts" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $tc) { $tc = Get-ChildItem "$peerTlsDir" -Filter "*.pem" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+        if ($sc) { Copy-Item $sc.FullName "$peerTlsDir/server.crt" -Force }
+        if ($ks) { Copy-Item $ks.FullName "$peerTlsDir/server.key" -Force }
+        if ($tc) { Copy-Item $tc.FullName "$peerTlsDir/ca.crt" -Force }
+        if (-not (Test-Path "$peerTlsDir/ca.crt") -and (Test-Path $tlsCertPath)) { Copy-Item $tlsCertPath "$peerTlsDir/ca.crt" -Force }
+
+        if ((Test-Path "$peerTlsDir/server.crt") -and (Test-Path "$peerTlsDir/server.key") -and (Test-Path "$peerTlsDir/ca.crt")) {
+            Write-Host "    [OK] Peer TLS (server.crt, server.key, ca.crt) ready" -ForegroundColor Green
+        } else {
+            Write-Host "    [WARN] Peer TLS incomplete; peer may exit on start" -ForegroundColor Yellow
+        }
     } else {
         Write-Host "    [WARN] Enrollment failed, using structure only" -ForegroundColor Yellow
         if ($enrollResult) { Write-Host "    $enrollResult" -ForegroundColor Gray }

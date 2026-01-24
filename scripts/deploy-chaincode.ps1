@@ -12,15 +12,24 @@ $CHAINCODE_SEQUENCE = "1"
 $CHANNEL_NAME = "landregistrychannel"
 $CHAINCODE_PATH = "github.com/landregistry/chaincode"
 
-# Check if network is running
+# Check if network is running (need at least one peer for chaincode)
 Write-Host "[1/6] Checking if network is running..." -ForegroundColor Green
-$peers = docker ps --format "{{.Names}}" | Select-String -Pattern "peer0"
+$all = docker ps --format "{{.Names}}"
+$peers = $all | Select-String -Pattern "peer0"
+$orderer = $all | Select-String -Pattern "orderer"
 if (-not $peers) {
-    Write-Host "  [FAIL] Network is not running. Please start the network first:" -ForegroundColor Red
-    Write-Host "    .\scripts\network-start.ps1" -ForegroundColor Yellow
+    Write-Host "  [FAIL] No peer containers are running. Chaincode deployment requires peers." -ForegroundColor Red
+    if ($orderer) {
+        Write-Host "  Orderer is running; peers may have exited or were not started." -ForegroundColor Yellow
+    }
+    Write-Host "  Start orderer and peers:" -ForegroundColor Yellow
+    Write-Host "    .\scripts\start-peers.ps1" -ForegroundColor White
+    Write-Host "  Or, from network folder:" -ForegroundColor Yellow
+    Write-Host "    cd network; docker-compose up -d orderer.example.com peer0.landreg.example.com peer0.court.example.com" -ForegroundColor White
+    Write-Host "  Full network: .\scripts\network-start.ps1  |  All containers: docker ps -a" -ForegroundColor Gray
     exit 1
 }
-Write-Host "  [OK] Network is running" -ForegroundColor Green
+Write-Host "  [OK] Network is running (peers found)" -ForegroundColor Green
 Write-Host ""
 
 # Check if chaincode exists
