@@ -23,6 +23,12 @@ if (-not (Test-Path "network/channel-artifacts")) {
 if (-not (Test-Path "network/system-genesis-block")) {
     New-Item -ItemType Directory -Path "network/system-genesis-block" -Force | Out-Null
 }
+# configtxgen fails if genesis.block is a directory (e.g. from a bad run)
+$genesisFile = "network/system-genesis-block/genesis.block"
+if (Test-Path $genesisFile) {
+    $item = Get-Item $genesisFile
+    if ($item.PSIsContainer) { Remove-Item -Recurse -Force $genesisFile }
+}
 Write-Host "  [OK] Directories ready" -ForegroundColor Green
 Write-Host ""
 

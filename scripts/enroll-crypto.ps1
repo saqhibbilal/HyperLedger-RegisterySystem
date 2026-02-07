@@ -61,15 +61,32 @@ foreach ($org in $orgs) {
     New-Item -ItemType Directory -Force -Path "$peerMsp/signcerts" | Out-Null
     New-Item -ItemType Directory -Force -Path "$peerMsp/keystore" | Out-Null
 
-    # Get CA TLS cert from container or from host (CA writes to fabric-ca/org/ on the mounted volume)
+    # Get CA TLS cert: prefer host fabric-ca/org/ (same as container mount); fallback to docker cp
     Write-Host "    Copying CA TLS certificate..." -ForegroundColor Gray
-    docker cp "${org.CA}:/etc/hyperledger/fabric-ca-server-config/tls-cert.pem" $tlsCertPath 2>&1 | Out-Null
-    docker cp "${org.CA}:/etc/hyperledger/fabric-ca-server-config/ca-cert.pem" $caCertPath 2>&1 | Out-Null
-    if (-not (Test-Path $tlsCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/$($org.Name)/tls-cert.pem")) {
-        Copy-Item "$networkPath/organizations/fabric-ca/$($org.Name)/tls-cert.pem" $tlsCertPath -Force
+    $fabricCaOrg = Join-Path $networkPath "organizations/fabric-ca/$($org.Name)"
+    if (Test-Path "$fabricCaOrg/tls-cert.pem") {
+        Copy-Item "$fabricCaOrg/tls-cert.pem" $tlsCertPath -Force
     }
-    if (-not (Test-Path $caCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/$($org.Name)/ca-cert.pem")) {
-        Copy-Item "$networkPath/organizations/fabric-ca/$($org.Name)/ca-cert.pem" $caCertPath -Force
+    if (Test-Path "$fabricCaOrg/ca-cert.pem") {
+        Copy-Item "$fabricCaOrg/ca-cert.pem" $caCertPath -Force
+    }
+    if (-not (Test-Path $tlsCertPath)) {
+        $cn = $org.CA
+        if ($cn) {
+            docker cp "${cn}:/etc/hyperledger/fabric-ca-server-config/tls-cert.pem" $tlsCertPath 2>$null
+        }
+        if (-not (Test-Path $tlsCertPath) -and (Test-Path "$fabricCaOrg/tls-cert.pem")) {
+            Copy-Item "$fabricCaOrg/tls-cert.pem" $tlsCertPath -Force
+        }
+    }
+    if (-not (Test-Path $caCertPath)) {
+        $cn = $org.CA
+        if ($cn) {
+            docker cp "${cn}:/etc/hyperledger/fabric-ca-server-config/ca-cert.pem" $caCertPath 2>$null
+        }
+        if (-not (Test-Path $caCertPath) -and (Test-Path "$fabricCaOrg/ca-cert.pem")) {
+            Copy-Item "$fabricCaOrg/ca-cert.pem" $caCertPath -Force
+        }
     }
 
     $certToUse = if (Test-Path $caCertPath) { $caCertPath } elseif (Test-Path $tlsCertPath) { $tlsCertPath } else { $null }
@@ -192,14 +209,13 @@ New-Item -ItemType Directory -Force -Path "$ordererOrgMsp/cacerts" | Out-Null
 New-Item -ItemType Directory -Force -Path "$ordererOrgMsp/tlscacerts" | Out-Null
 New-Item -ItemType Directory -Force -Path $ordererTlsDir | Out-Null
 
-docker cp "ca-orderer:/etc/hyperledger/fabric-ca-server-config/tls-cert.pem" $ordererTlsCertPath 2>&1 | Out-Null
-docker cp "ca-orderer:/etc/hyperledger/fabric-ca-server-config/ca-cert.pem" $ordererCaCertPath 2>&1 | Out-Null
-if (-not (Test-Path $ordererTlsCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/ordererOrg/tls-cert.pem")) {
-    Copy-Item "$networkPath/organizations/fabric-ca/ordererOrg/tls-cert.pem" $ordererTlsCertPath -Force
-}
-if (-not (Test-Path $ordererCaCertPath) -and (Test-Path "$networkPath/organizations/fabric-ca/ordererOrg/ca-cert.pem")) {
-    Copy-Item "$networkPath/organizations/fabric-ca/ordererOrg/ca-cert.pem" $ordererCaCertPath -Force
-}
+$ordererFabricCa = Join-Path $networkPath "organizations/fabric-ca/ordererOrg"
+if (Test-Path "$ordererFabricCa/tls-cert.pem") { Copy-Item "$ordererFabricCa/tls-cert.pem" $ordererTlsCertPath -Force }
+if (Test-Path "$ordererFabricCa/ca-cert.pem") { Copy-Item "$ordererFabricCa/ca-cert.pem" $ordererCaCertPath -Force }
+if (-not (Test-Path $ordererTlsCertPath)) { docker cp "ca-orderer:/etc/hyperledger/fabric-ca-server-config/tls-cert.pem" $ordererTlsCertPath 2>$null }
+if (-not (Test-Path $ordererCaCertPath)) { docker cp "ca-orderer:/etc/hyperledger/fabric-ca-server-config/ca-cert.pem" $ordererCaCertPath 2>$null }
+if (-not (Test-Path $ordererTlsCertPath) -and (Test-Path "$ordererFabricCa/tls-cert.pem")) { Copy-Item "$ordererFabricCa/tls-cert.pem" $ordererTlsCertPath -Force }
+if (-not (Test-Path $ordererCaCertPath) -and (Test-Path "$ordererFabricCa/ca-cert.pem")) { Copy-Item "$ordererFabricCa/ca-cert.pem" $ordererCaCertPath -Force }
 
 $ordererCert = if (Test-Path $ordererCaCertPath) { $ordererCaCertPath } elseif (Test-Path $ordererTlsCertPath) { $ordererTlsCertPath } else { $null }
 if ($ordererCert) {

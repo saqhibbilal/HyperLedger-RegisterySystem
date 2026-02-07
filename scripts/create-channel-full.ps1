@@ -68,16 +68,62 @@ try {
 
 Write-Host ""
 
-# Create channel using peer
+# Create channel on orderer (peer channel create)
 Write-Host "[4/5] Creating channel on orderer..." -ForegroundColor Green
-Write-Host "  This step requires peer CLI tools and proper crypto materials." -ForegroundColor Yellow
-Write-Host "  Channel will be created when crypto materials are properly generated." -ForegroundColor Gray
+$blockPath = "$channelArtifactsPath/$CHANNEL_NAME.block"
+$ordererTlsCa = "$organizationsPath/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt"
+$landregAdminMsp = "$organizationsPath/peerOrganizations/landreg.example.com/users/Admin@landreg.example.com/msp"
+
+if (Test-Path $blockPath) {
+    Write-Host "  Channel block exists; skipping create. To recreate, delete $blockPath" -ForegroundColor Gray
+} elseif (-not (Test-Path $landregAdminMsp)) {
+    Write-Host "  [FAIL] LandReg Admin MSP not found. Run .\scripts\enroll-crypto.ps1" -ForegroundColor Red
+    exit 1
+} else {
+    $dockerNet = (docker inspect ca-orderer --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>$null)
+    if (-not $dockerNet) { $dockerNet = "network_landregistry" }
+    $createOut = docker run --rm --network $dockerNet `
+      -v "${organizationsPath}:/etc/hyperledger/organizations" `
+      -v "${channelArtifactsPath}:/etc/hyperledger/channel-artifacts" `
+      -e CORE_PEER_LOCALMSPID=LandRegMSP `
+      -e CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/organizations/peerOrganizations/landreg.example.com/users/Admin@landreg.example.com/msp `
+      -e CORE_PEER_TLS_ENABLED=true `
+      hyperledger/fabric-tools:2.5.3 `
+      peer channel create -o orderer.example.com:7050 -c $CHANNEL_NAME `
+      -f /etc/hyperledger/channel-artifacts/$CHANNEL_NAME.tx `
+      --outputBlock /etc/hyperledger/channel-artifacts/$CHANNEL_NAME.block `
+      --tls --cafile /etc/hyperledger/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/ca.crt 2>&1
+    if ($LASTEXITCODE -ne 0 -and -not (Test-Path $blockPath)) {
+        Write-Host "  [FAIL] Channel create failed: $createOut" -ForegroundColor Red
+        exit 1
+    }
+    if (Test-Path $blockPath) { Write-Host "  [OK] Channel created" -ForegroundColor Green }
+}
+
 Write-Host ""
 
-Write-Host "[5/5] Channel setup complete" -ForegroundColor Green
-Write-Host "  Channel transaction file created: network/channel-artifacts/$CHANNEL_NAME.tx" -ForegroundColor Gray
+# Join running peers to channel
+Write-Host "[5/5] Joining peers to channel..." -ForegroundColor Green
+if (-not (Test-Path $blockPath)) {
+    Write-Host "  [FAIL] Channel block not found" -ForegroundColor Red
+    exit 1
+}
+$peerNames = @(docker ps --format "{{.Names}}" | Select-String -Pattern "peer0")
+$joined = 0
+foreach ($p in $peerNames) {
+    $name = if ($p.Line) { $p.Line.Trim() } else { $p.ToString().Trim() }
+    if (-not $name) { continue }
+    docker cp "$blockPath" "${name}:/tmp/$CHANNEL_NAME.block" 2>$null | Out-Null
+    $j = docker exec $name peer channel join -b /tmp/$CHANNEL_NAME.block 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  [OK] $name joined" -ForegroundColor Green
+        $joined++
+    } else {
+        if ($j -match "already joined") { Write-Host "  [OK] $name already joined" -ForegroundColor Gray; $joined++ }
+        else { Write-Host "  [WARN] $name join: $j" -ForegroundColor Yellow }
+    }
+}
+if ($joined -eq 0) { Write-Host "  [WARN] No peers joined. Run .\scripts\start-peers.ps1" -ForegroundColor Yellow }
 Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  1. Generate crypto materials: .\scripts\generate-crypto-materials.ps1" -ForegroundColor White
-Write-Host "  2. Join peers to channel: .\scripts\join-channel.ps1" -ForegroundColor White
+Write-Host "Channel ready. Next: .\scripts\deploy-chaincode.ps1" -ForegroundColor Yellow
 Write-Host ""

@@ -163,8 +163,6 @@ Profiles:
       LandRegistryConsortium:
         Organizations:
           - *LandRegOrg
-          - *SubRegistrarOrg
-          - *CourtOrg
 
   LandRegistryChannel:
     <<: *ChannelDefaults
@@ -173,7 +171,5 @@ Profiles:
       <<: *ApplicationDefaults
       Organizations:
         - *LandRegOrg
-        - *SubRegistrarOrg
-        - *CourtOrg
       Capabilities:
         <<: *ApplicationCapabilities
